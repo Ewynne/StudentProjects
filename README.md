@@ -3,6 +3,8 @@ Student Projects Repository
 
 Repository for student projects
 
+Please create a directory for your project (under metrics if it's a metricsy thing), and preferably create a branch for it as well, as it will keep things a bit organized. Also, a readme for your project would be great, as well.
+
 
 Ongoing Projects
 ----------------
