@@ -1,0 +1,359 @@
+#!/usr/bin/env ruby
+
+require 'syck'
+
+class Key
+  def initialize()
+    @hash = Hash.new
+    @all = Array.new
+    @hosts = Array.new
+    @resources = Array.new
+    @modules = Array.new
+    @other = Array.new
+  end
+    
+  def hash
+    return @hash
+  end
+  
+  def all
+    return @all
+  end
+  
+  def hosts
+    return @hosts
+  end
+  
+  def resources
+    return @resources
+  end
+  
+  def modules
+    return @modules
+  end
+  
+  def other
+    return @other
+  end
+  
+  def add_refs(ref, dir)
+    if dir.include?("hosts")
+      @hosts = @hosts << ref
+    elsif dir.include?("resource")
+      @resources = @resources << ref
+    elsif dir.include?("module")
+      @modules = @modules << ref
+    else
+      @other = @other << ref
+    end
+    @all = @all << ref
+    return @all
+  end
+  
+  def find_key(key)
+    value = @hash.fetch(key)
+    puts "#{key}"
+    value.print(1, 0)
+    puts 
+    puts
+    puts "#{key}"
+    value.print_refs("")
+    value.print(1, 1)
+  end
+  
+  def find_value(key, val)
+    value = @hash.fetch(key)
+    h = value.hash
+    if h.include?(val)
+      puts "#{key}:#{val}"
+      obj = h.fetch(val)
+      obj.print_refs("  ")
+    else
+      puts "#{key}:#{value} not found"
+    end
+  end 
+  
+  def find_host(key, host)
+    @found = 0
+    values = @hash.fetch(key)
+    h = values.hash
+    h.each_pair do |name, obj|
+      if obj.all.include?(host)
+        puts "key_value = #{name}"
+        @found = 1
+      end
+    end
+    if @found == 0 
+      puts "#{key}:#{host} not found!!"
+    end
+  end 
+  
+  def print_refs(str)
+    @count= @hosts.length
+    if @count > 0
+      puts "#{str} --HOST_REFS:#{@count}"
+      @hosts.each do |host|
+         puts "#{str}   @#{host}"
+      end 
+    end
+    @count=@resources.length
+    if @count > 0
+      puts "#{str} --RESOURCE_REFS:#{@count}"
+      @resources.each do |resource|
+        puts "#{str}   @#{resource}"
+      end
+    end
+    @count=@modules.length
+    if @count > 0
+      puts "#{str} --MODULE_REFS:#{@count}"
+      @modules.each do |modules|
+        puts "#{str}   @#{modules}"
+      end
+    end
+    @count=@other.length
+    if @count > 0
+      puts "#{str} --OTHER_REFS:#{@count}"
+      @other.each do |other|
+        puts "#{str}   @#{other}"
+      end
+    end
+     puts "#{str}"
+  end
+  
+  def print(level, refs)
+    if !@hash.empty?
+      num = 0
+      str = ""
+      empty_str = ""
+      value_str = ""
+      while num < level do
+        str = str + "|   "
+        empty_str = empty_str + "    "
+        value_str = value_str + "----"
+        num = num+1
+      end
+      space = "\n" + str
+      @hash.each_pair do |key, value|
+        if key.kind_of?(String)
+          if key.include? "BEGIN"
+            if(refs == 1)
+              this_str = value_str + key
+            else
+             this_str = str + key
+            end
+            this_str = this_str.gsub(/[^__]^/, space)
+            this_str.strip
+            puts "#{this_str}"
+          else
+           key = key.gsub(/\n+\s*/m, space)
+           key.strip
+           if(refs == 1)
+              puts "#{value_str}#{key}:"
+            else
+              puts "#{str}#{key}:"
+            end
+          end
+        else
+           if(refs == 1)
+              puts "#{value_str}#{key}:"
+            else
+              puts "#{str}#{key}:"
+            end
+        end
+        if(refs == 1)
+          value.print_refs(empty_str)
+        end
+        value.print(level+1, refs)
+      end
+    end
+  end
+  
+  def add_value(key, value, ref, dir)
+    @hash.store(key, Key.new()) unless @hash.has_key?(key)
+    key_obj = @hash.fetch(key)
+    key_obj.add_refs(ref, dir)
+    key_hash = key_obj.hash
+    
+    if value.kind_of?(Hash)
+      value.each do |hash_key, val|
+        key_obj.add_value(hash_key, val, ref, dir)
+      end
+    elsif value.kind_of?(Array)
+      value.collect
+      value.each do |val|
+      	add_value(key, val, ref, dir)
+      end
+    else
+      key_hash.store(value, Key.new()) unless key_hash.has_key?(value)
+      v = key_hash.fetch(value)
+      v.add_refs(ref, dir)
+    end
+  end
+  
+  def get_path(key)
+    @path = key.split(',')
+    h = @@hash
+    @path.each do |k|
+      obj = h.fetch(k)
+      h = obj.hash
+    end    
+    return obj
+  end
+  
+end
+
+
+class Run
+
+  def self.start(dir)
+    @@k = Key.new()
+    @@list = Array.new
+    Dir.chdir("/etc/puppet/hieradata")
+    open_dir(dir)
+  end
+  
+  def self.open_dir(dir)
+    curr = Dir.pwd
+    Dir.chdir("#{curr}/#{dir}")
+    this = Dir.pwd
+    Dir.glob("*yaml") do |item|
+       next if item == '.' or item == '..'
+       p = use_yaml(item, this);
+    end
+    @dir = Dir.glob("*").select{ |f| File.directory? f}
+    if !@dir.empty?
+      @dir.each do |f|
+        open_dir(f)
+      end
+    end
+    Dir.chdir("#{curr}")
+ end
+  
+  def self.use_yaml(file, dir)
+    yp = YAML::Syck::Parser.new( {} ) 
+    if File.file?(file)
+      if @data = yp.load( File::open( file ).read)
+        @host, @this = file.split(/[\.\_.*]/)
+        @data.each_pair do |key, value|
+          @@k.add_value(key, value, @host, dir)
+        end
+      end
+    else
+      puts "fail file"
+    end
+  end
+  
+  def self.list
+    list = @@list
+    return list
+  end
+  
+  def self.add_key(key)
+    @@list = @@list << key
+  end
+   
+  def self.find(key)
+    @@k.find_key(key)
+  end
+ 
+  def self.print()
+    @@k.print(0, 0)
+    @@k.print(0, 1)
+  end
+ 
+  def self.get_value(value)
+    @@list.each do |key|
+      @@k.find_value(key, value)
+    end
+  end
+ 
+  def self.get_host(host)
+    if host.include?(".yaml") 
+      host = host.gsub(".yaml", "")
+    elsif host.include?("-yaml")
+      host = host.gsub("-yaml", "")
+    end
+    @@list.each do |key|
+      @@k.find_host(key, host)
+    end
+    
+    
+  end
+  
+  def self.finish
+    @@list.each do |key|
+      puts "_____________________________________________________"
+      puts
+      Run.find(key)
+    end
+  end
+  
+  def self.error
+    puts "improper syntax" 
+  end
+  
+  def self.help
+    puts "	Usage: Key Finder"
+    puts
+    puts "	Syntax:  key_finder KEY_LIST [-v VALUE] [-h HOST] [--help]"
+    puts 
+    puts "	key_finder with no argumets prints all yaml key_values with"
+    puts "	the list of references for each key and its subsequent values" 
+    puts
+    puts "	the KEY_LIST is in the form of a space separated keys"
+    puts "	  *if the desired key is the value of a key-value pair, "
+    puts "	   print the key-value pair(s) separated with a comma"
+    puts
+    puts "	OPTIONS:"
+    puts "	-v "
+    puts "		the -v option requests a list of all references to"
+    puts "		a specific key-value pair"
+    puts "	-h "
+    puts "		the -h option returns the key-value associated with a host"
+    puts "	--help"
+    puts "		prints the help message"
+    puts
+    puts "	Author: Emma Wynne"
+  end
+end
+
+
+Run.start("")
+size = ARGV.length
+if size == 0
+  Run.print
+else
+size -= 1
+count = 0
+v_or_h = 0
+while count <= size
+  arg = ARGV[count]
+  if arg.eql?("--help")
+    Run.help
+  elsif arg.eql?("-v")
+    if Run.list.empty?
+      Run.host_error
+    else
+      Run.get_value(ARGV[count+1])
+    end
+    v_or_h = 1
+    count+=1
+  elsif arg.eql?("-h")
+    if Run.list.empty?
+      Run.host_error
+    else
+      Run.get_host(ARGV[count+1])
+    end
+    v_or_h = 1
+    count+=1
+  else
+    Run.add_key(arg)
+  end
+  count+=1
+end
+if v_or_h == 0
+  Run.finish
+end
+end
+  
+
