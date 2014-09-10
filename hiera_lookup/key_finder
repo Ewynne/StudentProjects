@@ -50,41 +50,56 @@ class Key
     return @all
   end
   
-  def find_key(key)
-    value = @hash.fetch(key)
-    puts "#{key}"
-    value.print(1, 0)
-    puts 
-    puts
-    puts "#{key}"
-    value.print_refs("")
-    value.print(1, 1)
+  def find_key(key, r)
+    value = get_path_obj(key)
+    if r == 0
+      puts "#{key}"
+      value.print(1, 0)
+      puts
+    else
+      puts "#{key}"
+      value.print_refs("")
+      value.print(1, 1)
+      puts
+    end
   end
   
   def find_value(key, val)
-    value = @hash.fetch(key)
+    value = get_path_obj(key)
+    @found = 0
+    search = val.to_s
     h = value.hash
-    if h.include?(val)
-      puts "#{key}:#{val}"
-      obj = h.fetch(val)
-      obj.print_refs("  ")
-    else
-      puts "#{key}:#{value} not found"
+    h.each do |v, o|
+      if search == v.to_s
+        puts
+        puts "#{key}:#{val}"
+        o.print_refs("  ")
+        @found = 1
+      end
+    end
+    if @found == 0
+      puts
+      puts "#{key}:#{val} not found"
+      puts
     end
   end 
   
   def find_host(key, host)
     @found = 0
-    values = @hash.fetch(key)
+    values = get_path_obj(key)
     h = values.hash
     h.each_pair do |name, obj|
       if obj.all.include?(host)
+      	puts
         puts "key_value = #{name}"
+        puts
         @found = 1
       end
     end
     if @found == 0 
+      puts
       puts "#{key}:#{host} not found!!"
+      puts
     end
   end 
   
@@ -133,31 +148,38 @@ class Key
         num = num+1
       end
       space = "\n" + str
-      @hash.each_pair do |key, value|
+      @hash.map.sort.each do |key, value|
         if key.kind_of?(String)
+          key.chomp
           if key.include? "BEGIN"
             if(refs == 1)
               this_str = value_str + key
             else
              this_str = str + key
             end
-            this_str = this_str.gsub(/[^__]^/, space)
-            this_str.strip
+            this_str = this_str.gsub(/[^__]^/, "#{space}")
             puts "#{this_str}"
           else
-           key = key.gsub(/\n+\s*/m, space)
-           key.strip
-           if(refs == 1)
-              puts "#{value_str}#{key}:"
+            if key.size >= 180 #&& !key.include?("\n")
+              key = key.strip
+              key.each_line do |line|
+                trim = space.gsub('|   ', '')
+                key = key.gsub(/.{1,100}|.+/, ("\n#{trim}" + '+\0'))
+              end
+            end  
+            key = key.strip
+            key = key.gsub(/\n+\s*/m, "#{space}")
+            if(refs == 1)
+              puts "#{value_str}#{key}"
             else
-              puts "#{str}#{key}:"
+              puts "#{str}#{key}"
             end
           end
         else
            if(refs == 1)
-              puts "#{value_str}#{key}:"
+              puts "#{value_str}#{key}"
             else
-              puts "#{str}#{key}:"
+              puts "#{str}#{key}"
             end
         end
         if(refs == 1)
@@ -169,8 +191,12 @@ class Key
   end
   
   def add_value(key, value, ref, dir)
+    value = String.new("false") unless value != false
+    value = String.new("true") unless value != true
+    value = String.new("nil") unless !value.nil?
+  
     @hash.store(key, Key.new()) unless @hash.has_key?(key)
-    key_obj = @hash.fetch(key)
+    key_obj = get_path_obj(key)
     key_obj.add_refs(ref, dir)
     key_hash = key_obj.hash
     
@@ -181,7 +207,7 @@ class Key
     elsif value.kind_of?(Array)
       value.collect
       value.each do |val|
-      	add_value(key, val, ref, dir)
+        add_value(key, val, ref, dir)
       end
     else
       key_hash.store(value, Key.new()) unless key_hash.has_key?(value)
@@ -190,13 +216,23 @@ class Key
     end
   end
   
-  def get_path(key)
-    @path = key.split(',')
-    h = @@hash
-    @path.each do |k|
-      obj = h.fetch(k)
-      h = obj.hash
-    end    
+  def get_path_obj(key)
+    h = @hash
+    obj = ""
+    if key.kind_of?(String)
+      if key.include?(',')
+        @path = key.split(',')    
+        @path.each do |k|
+          puts k 
+          obj = h.fetch(k)
+          h = obj.hash
+        end
+      else 
+      obj = h.fetch(key)
+      end
+    else 
+      obj = h.fetch(key)
+    end   
     return obj
   end
   
@@ -216,7 +252,7 @@ class Run
     curr = Dir.pwd
     Dir.chdir("#{curr}/#{dir}")
     this = Dir.pwd
-    Dir.glob("*yaml") do |item|
+    Dir.glob("*.yaml") do |item|
        next if item == '.' or item == '..'
        p = use_yaml(item, this);
     end
@@ -252,13 +288,12 @@ class Run
     @@list = @@list << key
   end
    
-  def self.find(key)
-    @@k.find_key(key)
+  def self.find(key, r)
+    @@k.find_key(key, r)
   end
  
-  def self.print()
-    @@k.print(0, 0)
-    @@k.print(0, 1)
+  def self.print(r)
+    @@k.print(0, r)
   end
  
   def self.get_value(value)
@@ -280,11 +315,11 @@ class Run
     
   end
   
-  def self.finish
+  def self.finish(r)
     @@list.each do |key|
       puts "_____________________________________________________"
       puts
-      Run.find(key)
+      Run.find(key, r)
     end
   end
   
@@ -297,8 +332,7 @@ class Run
     puts
     puts "	Syntax:  key_finder KEY_LIST [-v VALUE] [-h HOST] [--help]"
     puts 
-    puts "	key_finder with no argumets prints all yaml key_values with"
-    puts "	the list of references for each key and its subsequent values" 
+    puts "	key_finder with no argumets prints all yaml key_values" 
     puts
     puts "	the KEY_LIST is in the form of a space separated keys"
     puts "	  *if the desired key is the value of a key-value pair, "
@@ -310,33 +344,44 @@ class Run
     puts "		a specific key-value pair"
     puts "	-h "
     puts "		the -h option returns the key-value associated with a host"
+    puts "	-r "
+    puts "		the -r option prints the yaml key and subsequent key_value "
+    puts "		reference-file lists. Without any specified hosts, the -r"
+    puts "		option prints, with references, every yaml key and key_value"
     puts "	--help"
     puts "		prints the help message"
     puts
     puts "	Author: Emma Wynne"
   end
+  
+  def self.print_path(arg)
+    obj = @@k.get_path_obj(arg)
+    puts "#{arg}"
+    obj.print_refs("   ") 
+  end
 end
 
 
 Run.start("")
+
 size = ARGV.length
-if size == 0
-  Run.print
-else
 size -= 1
 count = 0
 v_or_h = 0
+r = 0
+
 while count <= size
   arg = ARGV[count]
   if arg.eql?("--help")
     Run.help
+    v_or_h = 1
   elsif arg.eql?("-v")
     if Run.list.empty?
       Run.host_error
     else
       Run.get_value(ARGV[count+1])
     end
-    v_or_h = 1
+    v_or_h= 1
     count+=1
   elsif arg.eql?("-h")
     if Run.list.empty?
@@ -346,14 +391,21 @@ while count <= size
     end
     v_or_h = 1
     count+=1
-  else
+  elsif arg.eql?("-r")
+    r = 1
+  else 
     Run.add_key(arg)
   end
   count+=1
 end
+
+if size <= -1 || (r == 1 && size == 0)
+    Run.print(r)
+end
 if v_or_h == 0
-  Run.finish
+  Run.finish(r)
 end
-end
+
+
   
 
